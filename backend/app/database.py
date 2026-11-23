@@ -1,10 +1,12 @@
 import os
 from pathlib import Path
+from typing import Annotated
 
 from dotenv import load_dotenv
+from fastapi import Depends, HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.engine import make_url
-from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
@@ -29,3 +31,9 @@ class Base(DeclarativeBase):
 def get_db():
     with SessionLocal() as session:
         yield session
+
+DbSession = Annotated[Session, Depends(get_db)]
+
+
+def database_error() -> HTTPException:
+    return HTTPException(status_code=503, detail="Database unavailable. Please try again later.")

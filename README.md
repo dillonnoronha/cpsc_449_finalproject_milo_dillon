@@ -15,61 +15,37 @@ Students and other busy users often struggle to keep track of tasks and due date
 
 ## Implemented backend foundation
 
-The backend uses Python 3.11, FastAPI, PostgreSQL, SQLAlchemy 2.x, Pydantic v2,
-psycopg 3, and Alembic migrations. The following routes are implemented and were
-verified against the local PostgreSQL 18 `task_manager` database.
+The backend uses Python 3.11, FastAPI, PostgreSQL, SQLAlchemy, Pydantic, psycopg,
+and Alembic. Apply the existing migrations before starting it.
 
-| Method | Route | Behavior |
+| Method | Route | Access and success response |
 | --- | --- | --- |
-| GET | `/` | Application status; does not check the database. |
-| GET | `/health/db` | Executes `SELECT 1`; returns 503 if the database is unavailable. |
-| POST | `/tasks` | Saves a task and returns HTTP 201 with its generated ID and timestamp. |
-| GET | `/tasks` | Lists saved tasks by ID; returns `[]` when empty. |
+| GET | `/` | Public, 200 with application status |
+| GET | `/health/db` | Public, 200 when PostgreSQL responds, 503 otherwise |
+| POST | `/auth/login` | Public, 200 with an expiring JWT bearer token |
+| GET | `/auth/me` | Signed in, 200 with `id`, `name`, `email`, and `role` |
+| POST | `/tasks` | Signed-in owner, 201 with the created task |
+| GET | `/tasks` | Signed-in owner, 200 with owned tasks ordered by ID |
+| GET | `/tasks/{task_id}` | Signed-in owner, 200 with the requested task |
+| PUT | `/tasks/{task_id}` | Signed-in owner, 200 with the updated task |
+| DELETE | `/tasks/{task_id}` | Signed-in owner, 204 with an empty body |
 
-Tasks currently contain `id`, `title`, optional `description`, `status` (default
-`todo`), and a database-generated, timezone-aware `created_at`. Titles are trimmed
-and must contain 1–255 characters. Status is a nonempty string up to 50 characters;
-a fixed status enumeration is deferred. Tasks also have nullable `user_id` (foreign
-key to `users.id`) and timezone-aware `due_date`. Both fields are optional in POST
-and included in responses. Old requests and ownerless tasks remain valid. An
-unknown owner ID returns HTTP 422. There is no authentication or access control;
-GET still lists all tasks and specifying an owner does not authorize a request.
-Update/delete operations remain planned.
+Both roles use the same owner-scoped task routes. A task owned by someone else,
+an unowned task, and a nonexistent task all return 404 on item routes. Existing
+unowned rows stay in PostgreSQL and are excluded from task listings. The API
+assigns new tasks to the authenticated user and rejects a request body containing
+`user_id` with 422.
 
-Users contain `id`, required `name`, unique required `email`, nullable
-`password_hash`, `role` (default `user`), and database-generated `created_at`.
-`User.tasks` and `Task.user` form the one-to-many relationship. Both tables have
-an internal nullable, unique `seed_key`, which is not exposed through the API.
-Unseeded records leave this key null. No user, login, registration, or admin
-endpoints have been added.
-
-```text
-backend/
-├── app/
-│   ├── __init__.py
-│   ├── main.py       # Routes; schema changes are handled by Alembic
-│   ├── database.py   # Environment loading, engine, session dependency, Base
-│   ├── models.py     # User/Task database models and relationship
-│   └── schemas.py    # Request validation and ORM-compatible responses
-├── migrations/       # Baseline and additive users/task migration
-├── scripts/seed.py   # Transactional, repeatable synthetic development data
-├── alembic.ini
-├── requirements.txt
-└── .env.example
-```
-
-Alembic now owns schema creation and upgrades; application startup no longer calls
-`create_all()`. Sessions close after each request. Failed task writes roll back;
-constraint errors return 422 and database availability errors return a generic 503
-without connection details.
+POST and PUT accept the same fields. Titles are trimmed and must contain 1–255
+characters. Status is a trimmed string of 1–50 characters, defaulting to
+`todo`. Description and due date are optional and default to null. PUT replaces
+all writable fields while preserving the ID, owner, and creation timestamp. Send
+all writable values you want to retain. Use a timezone offset in due dates.
 
 ## Planned Features
 
-- **User authentication:** Register and log in securely.
-- **Task CRUD:** Create, view, edit, and delete personal tasks.
-- **Task tracking:** Assign due dates and update task statuses (To Do, In Progress, Completed).
-- **Real-time updates:** Reflect task changes across active sessions without a manual refresh.
-- **Role-based access control:** Regular users manage their own tasks; admins access protected administrative features.
+- **Registration:** Allow users to create accounts. Login is implemented.
+- **Admin functionality:** Add protected administrative features using the backend role guard.
 - **Basic analytics:** Display task totals and completion statistics.
 - **Integrations:** Show public holidays, optionally add deadlines to Google Calendar, and send email reminders.
 
@@ -95,25 +71,13 @@ without connection details.
 
 Our own FastAPI service will also expose authenticated endpoints for managing users and tasks.
 
-## Future Data Model Additions
-
-The users/tasks foundation above is implemented. Future work includes authentication,
-user ownership enforcement, role authorization, and a task `updated_at` field.
-
 ## Planned Backend Endpoints
 
 | Method | Endpoint | Description |
 | --- | --- | --- |
-| `POST` | `/auth/register` | Create an account. |
-| `POST` | `/auth/login` | Authenticate and receive a JWT. |
-| `GET` | `/tasks` | Retrieve the logged-in user's tasks. |
-| `POST` | `/tasks` | Create a task. |
-| `PUT` | `/tasks/{id}` | Update an owned task. |
-| `DELETE` | `/tasks/{id}` | Delete an owned task. |
-| `GET` | `/analytics` | Retrieve basic task statistics. |
-| `GET` | `/admin/users` | List users (admin only). |
-
-Endpoint paths may change as development progresses.
+| POST | `/auth/register` | Create an account. |
+| GET | `/analytics` | Retrieve basic task statistics. |
+| GET | `/admin/users` | List users using the admin guard. See the contract below. |
 
 ## Team Responsibilities
 
@@ -136,14 +100,17 @@ Endpoint paths may change as development progresses.
 - [x] Set up database and backend
 - [x] Add users/task relationship and Alembic migrations
 - [x] Seed 3 fictional users and 12 repeatable development tasks
-- [ ] Build registration and login
-- [ ] Implement task CRUD
-- [ ] Add user/admin authorization
+- [x] Build JWT login
+- [ ] Build registration
+- [x] Implement owner-scoped task CRUD
+- [x] Provide a database-backed admin role guard
+- [ ] Implement the protected admin endpoint and UI
 - [ ] Build task dashboard
 - [ ] Connect public holiday API
 - [ ] Connect Google Calendar API
 - [ ] Connect Resend API
-- [ ] Implement real-time task updates
+- [x] Implement owner-scoped WebSocket task notifications
+- [ ] Connect real-time task notifications to the client
 - [ ] Add task analytics
 - [ ] Test the application
 - [ ] Deploy frontend, backend, and database
@@ -169,13 +136,10 @@ From the repository root:
 ```powershell
 Set-Location .\backend
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
 if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 ```
 
-If activation is blocked by PowerShell policy, use
-`.\.venv\Scripts\python.exe` in place of `python`; activation is optional.
 Do not overwrite an existing `.env` containing your settings.
 
 For a **new installation only**, create the database once using your PostgreSQL
@@ -223,8 +187,7 @@ The seed script creates Alex Morgan and Jordan Lee as users and Taylor Brooks as
 an admin, all using fictional `example.com` addresses. Each owns four realistic
 tasks spanning `todo`, `in_progress`, and `completed`. Due dates are fixed in
 November 2026 at 17:00 UTC for reproducibility. All sample password hashes are
-NULL, so they have no login credentials. An admin role value alone grants no
-capability; there are no admin endpoints.
+NULL. Use the dedicated local demo accounts below for authenticated testing.
 
 Stable `cpsc449:v1:user:*` and `cpsc449:v1:task:*` keys identify sample records.
 Reruns update their sample fields while keeping IDs/creation timestamps, never
@@ -234,47 +197,158 @@ transaction to roll back. Database uniqueness constraints and a transaction-scop
 PostgreSQL advisory lock protect against concurrent seed runs. No reset/delete
 option is provided. Run this script only against a development database.
 
-Start from `backend/`:
+### Configure and start the demo
+
+From `backend/`, set `JWT_SECRET` in the server environment or the ignored
+`.env`. Generate a random value of at least 32 bytes. For example:
 
 ```powershell
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
+$env:JWT_SECRET = .\.venv\Scripts\python.exe -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
 
-Open Swagger UI at **http://127.0.0.1:8000/docs**.
-`/health/db` tests connectivity, not migration status or table existence. If task
-queries fail after an update, confirm `alembic current` reports the head revision.
-Apply migrations before starting the updated application.
-
-### Checkpoint verification
-
-In a second PowerShell terminal:
+Set distinct `DEMO_USER_PASSWORD` and `DEMO_ADMIN_PASSWORD` values (12–1024
+characters) in the local environment or ignored `.env`. With `DATABASE_URL`
+pointing to a disposable local database and migrations applied:
 
 ```powershell
-curl.exe -i http://127.0.0.1:8000/
-curl.exe -i http://127.0.0.1:8000/health/db
-curl.exe -i http://127.0.0.1:8000/tasks
-
-$task = Invoke-WebRequest -UseBasicParsing `
-  -Method Post -Uri "http://127.0.0.1:8000/tasks" `
-  -ContentType "application/json" `
-  -Body '{"title":"Checkpoint database proof","description":"Created through FastAPI"}'
-$task.StatusCode  # Expected: 201
-$task.Content
-
-curl.exe -i http://127.0.0.1:8000/tasks
-psql -h localhost -p 5432 -U postgres -d task_manager -W -c "SELECT id, title, status, created_at FROM tasks ORDER BY id;"
+.\.venv\Scripts\python.exe scripts/provision_demo_accounts.py --confirm-local-demo
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1 --ws-max-size 4096
 ```
 
-On a new database, the first GET returns `[]`. After POST, GET and SQL should show
-the same ID/title. Stop Uvicorn with Ctrl+C, restart it with the startup command,
-and repeat GET `/tasks` to demonstrate persistence. Whitespace-only titles should
-return HTTP 422 through Swagger UI. With PostgreSQL stopped, `/health/db` should
-return HTTP 503 without credentials; restore PostgreSQL afterward.
+The provisioning command creates `demo.user@example.com` (`user`) and
+`demo.admin@example.com` (`admin`). Reruns update credentials in place and
+preserve IDs. A collision with an unrelated account rolls back the pair. The
+original sample accounts keep their null password hashes.
 
-Capture the backend directory tree, successful database health response, Swagger
-POST with HTTP 201, and GET after restart alongside the matching SQL row. Hide
-passwords and credential-bearing URLs. Describe these as successful only after
-running them against PostgreSQL; imports or mocked tests do not prove persistence.
+API base URL is `http://127.0.0.1:8000`. Open Swagger at
+`http://127.0.0.1:8000/docs`. Set `FRONTEND_ORIGINS` to the client origins
+that should be allowed to call the API from another origin, for example
+`http://localhost:5173,http://127.0.0.1:5173`. Include the scheme and port.
+Restart the API after changing its configuration.
+
+### Login and task requests
+
+Send JSON to `POST /auth/login`:
+
+```json
+{"email":"demo.user@example.com","password":"<local demo password>"}
+```
+
+The 200 response has this shape:
+
+```json
+{"access_token":"<redacted>","token_type":"bearer","expires_in":3600}
+```
+
+Send `Authorization: Bearer <access_token>` on protected requests. Use
+`GET /auth/me` to initialize the client with the current user's ID, name,
+email, and role. Incorrect credentials and missing, invalid, or expired
+tokens return 401. Invalid request bodies return 422. Login and bearer-token
+verification return 503 if the signing key is unavailable. Login and
+protected routes return 503 if their database operation fails.
+
+Task responses contain `id`, `title`, `description`, `status`, `created_at`,
+`user_id`, and `due_date`. List responses are arrays of the same objects.
+A write body may contain `title` (required), `description`, `status`, and
+`due_date` (for example, `2026-12-01T17:00:00Z`). There is no owner input.
+
+1. `POST /tasks` with `{"title":"Checkpoint disposable task","description":"CRUD proof"}`.
+   Expect 201 and save the returned ID as `taskId`.
+2. `GET /tasks` and `GET /tasks/{{taskId}}`. Expect 200 and the same ID.
+3. `PUT /tasks/{{taskId}}` with `{"title":"Checkpoint disposable task","status":"completed"}`.
+   Expect 200 with the same ID, the new status, and a null description.
+4. `DELETE /tasks/{{taskId}}`. Expect 204 with an empty body.
+5. `GET /tasks/{{taskId}}` returns 404. `GET /tasks` returns 200 with the ID absent.
+
+Keep tokens and passwords out of screenshots and shared Postman exports.
+
+### Admin route contract for Dillon
+
+In Dillon's `backend/app/admin.py`, import `AdminUser` and use it as a
+typed dependency on the handler:
+
+```python
+from fastapi import APIRouter
+from sqlalchemy import select
+
+from app.auth import AdminUser
+from app.database import DbSession
+from app.models import User
+from app.schemas import UserSummary
+
+router = APIRouter(prefix="/admin", tags=["admin"])
+
+
+@router.get("/users", response_model=list[UserSummary])
+def list_users(db: DbSession, admin: AdminUser):
+    rows = db.execute(select(User.id, User.name, User.email, User.role).order_by(User.id))
+    return rows.mappings().all()
+```
+
+In `backend/app/main.py`, add `from . import admin` and register the router
+with `app.include_router(admin.router)` after app creation. The contract
+for `GET /admin/users` is 401 without a valid bearer token, 403 for a signed-in
+non-admin, and 200 with an array of user summaries for an admin. The guard
+checks the stored `admin` role on every request. The example selects only
+response fields. This branch supplies the guard, and Dillon owns the actual
+admin route and client.
+
+### Nager.Date handoff
+
+The available Dillon commit, `8faae68`, has three provider modules:
+`backend/app/routers/holidays.py`, `backend/app/services/holiday_service.py`,
+and `backend/app/schemas/holiday.py`. Port the holiday models to a distinct
+module such as `app/holiday_schemas.py` so the existing `app/schemas.py` remains
+the import target for auth and task models. Update both holiday imports, add
+`httpx` (Dillon's branch declares `0.28.1`), carry over the
+`NAGER_DATE_BASE_URL` and `DEFAULT_COUNTRY_CODE` settings, and register
+`holidays.router` in `app/main.py`. Dillon's settings module uses
+`pydantic-settings` (declared as `2.6.1`) if ported as-is. No database changes
+are needed for the holiday lookups.
+
+Keep the Alembic migrations and existing users/tasks models as the integration
+base. Dillon's scaffold uses startup `create_all()`, uppercase enum roles and
+statuses, required task ownership, date-only due dates, and different password
+and foreign-key constraints. Port the provider modules independently of that
+scaffold. Calendar and Resend have no implementation in the available refs.
+
+### Live task updates
+
+Connect to `ws://127.0.0.1:8000/ws/tasks` locally or `wss://<backend-host>/ws/tasks`
+over HTTPS. In the browser's open handler, send the raw access token as the first
+text frame within five seconds. Keep it out of URLs and logs. On
+`{"type":"ready"}`, load `GET /tasks`. On `{"type":"tasks.changed"}`, load
+`GET /tasks` again and update the client state. Events carry no task data and
+can be coalesced. Refresh after reconnecting to catch up with any missed writes.
+On token expiry, sign in again and reconnect. Browser origins must match the
+backend origin or be listed in `FRONTEND_ORIGINS`.
+
+To demo, sign in as the same demo user in two sessions. Wait for both to load
+their task list. Create, edit, or delete the demo task in session A and show the
+change appearing in session B without manual refresh. A different account
+receives no notification for those writes.
+
+Task notifications are in memory. Run the demo with one backend instance and
+one worker. Multiple instances or workers would need shared event delivery.
+Only successful task writes through this API trigger notifications.
+
+### Hosting and health
+
+Railway is the planned host. Set the service root to `backend`, install
+`requirements.txt`, set `DATABASE_URL` (with the `postgresql+psycopg` driver
+prefix), `JWT_SECRET`, and the deployed `FRONTEND_ORIGINS`. Apply
+`python -m alembic upgrade head` once per release before accepting traffic.
+On a POSIX host that sets `PORT`, start with:
+
+```sh
+python -m uvicorn app.main:app --host 0.0.0.0 --port "$PORT" --workers 1 --ws-max-size 4096
+```
+
+Use `GET /` for process health and `GET /health/db` to verify connectivity.
+`/health/db` returns `{"status":"ok","database":"connected"}` with 200 or a
+503 on failure. It does not verify that migrations are current. This repository
+does not yet supply a hosted URL. Provision demo accounts only for the isolated
+demo environment.
 
 ### Verify seed counts and relationships
 
@@ -300,35 +374,6 @@ SELECT count(*) AS orphaned_tasks FROM tasks t
 LEFT JOIN users u ON u.id = t.user_id
 WHERE t.user_id IS NOT NULL AND u.id IS NULL; -- 0
 ```
-
-For a task with an owner, take an actual user ID from the query above and send
-`{"title":"Review schema","user_id":1,"due_date":"2026-11-15T17:00:00Z"}`
-through Swagger, replacing `1` if needed. Omitting both new fields still works.
-
-### Verification performed during database expansion
-
-- Inspected Git branch `main`, working tree, original models/configuration, and live
-  database schema before edits. The existing `tasks` table contained **zero rows**.
-- Applied both Alembic revisions against PostgreSQL 18; revision is
-  `0002_users_and_task_details`. `alembic check` found no model/schema differences.
-- Confirmed 3 sample users, NULL password hashes, 12 seeded tasks, four tasks per
-  user, non-null due dates, and the database foreign key.
-- Ran seed twice. Counts, IDs, ownership, due dates, and creation timestamps were
-  unchanged; no duplicate samples appeared.
-- Actual HTTP requests passed for GET `/`, GET `/health/db`, GET `/tasks`, and
-  POST `/tasks` using the original request shape (201 with null new fields).
-  A nonexistent user ID returned 422 without inserting a task.
-- The second seed run preserved an unrelated API-created task unchanged. Final
-  database has **12 seeded tasks plus 1 unseeded verification task** titled
-  `Legacy request compatibility verification`. It was intentionally retained;
-  no records were deleted. Since the original table was empty, preservation of
-  nonempty pre-migration data was not exercised.
-- `pip check` passed. Alembic was added to the local virtual environment. Credentials
-  remained in ignored local configuration and were not printed or changed.
-
-Recommended evidence: pgAdmin table columns/foreign key; the user list showing
-`no_login`; seeded counts before/after rerun; joined task/owner rows; Swagger
-GET `/health/db`, POST `/tasks` (201), and GET `/tasks`. Hide connection secrets.
 
 Secrets such as database passwords, JWT signing keys, OAuth client secrets, and Resend API keys must be stored in environment variables and **must not be committed to GitHub**.
 
